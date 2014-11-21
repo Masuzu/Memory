@@ -5,9 +5,19 @@
 typedef struct block
 {
 	size_t size;
+	struct block *previous;
 	struct block *next;
-	int free;
+	size_t free;
+	byte data[1];
 } block;
+
+typedef struct block_metadata
+{
+	size_t size;
+	block *previous;
+	block *next;
+	size_t free;
+} block_metadata;
 
 static HANDLE heap = NULL;
 static block *heap_base = NULL;
@@ -27,15 +37,16 @@ static block *heap_base = NULL;
 #endif
 
 // Aligned block size
-#define ALIGNED_BLOCK_SIZE	align(sizeof(block))
+#define BLOCK_METADATA_SIZE	align(sizeof(block_metadata))
 
 // Finds a free chunck large enough for 'size' bytes.
 // Returns the block found or NULL or otherwise.
 // 'last' will contain the last block visited.
-static block *Memory_FindBlock(block **last, size_t size)
+// Note that when 'heap_base' is returned, 'last' equals NULL.
+static block *MemoryFindBlock(block **last, size_t size)
 {
 	block *b = heap_base;
-	*last = b;
+	*last = NULL;
 	while (b && !(b->free && b->size >= size))
 	{
 		*last = b;
@@ -44,8 +55,9 @@ static block *Memory_FindBlock(block **last, size_t size)
 	return b;
 }
 
-// Allocates a new memory block and link it to 'last_block'
-static block *Memory_ExtendHeap(block *last_block, size_t size)
+// Allocates a new memory block and link it to 'last_block'.
+// Returns the allocated block.
+static block *MemoryExtendHeap(block *last_block, size_t size)
 {
 	if (!heap)
 	{
@@ -54,13 +66,14 @@ static block *Memory_ExtendHeap(block *last_block, size_t size)
 			return NULL;
 	}
 
-	block *next = HeapAlloc(heap, HEAP_ZERO_MEMORY, ALIGNED_BLOCK_SIZE + align(size));
+	block *next = HeapAlloc(heap, HEAP_ZERO_MEMORY, BLOCK_METADATA_SIZE + align(size));
 	if (!next)
 		return NULL;
 
 	next->free = 0;
-	next->size = size;
 	next->next = NULL;
+	next->previous = last_block;
+	next->size = size;
 	if (last_block)
 		last_block->next = next;
 	else
@@ -69,27 +82,56 @@ static block *Memory_ExtendHeap(block *last_block, size_t size)
 	return next;
 }
 
-static void *Memory_malloc(size_t size)
+// Splits the block passed as argument into 2 smaller blocks.
+// Does nothing if 'size + BLOCK_METADATA_SIZE + POINTER_SIZE' is greater than block_to_split's size.
+static void MemorySplitBlock(block *block_to_split, size_t size)
 {
-	block *last_block, *free_block;
-	byte *new_block;
-	
-	free_block = Memory_FindBlock(&last_block, size);
+	block *new_block;
+	if (block_to_split->size >= size + BLOCK_METADATA_SIZE + POINTER_SIZE)
+	{
+		new_block = block_to_split->data + block_to_split->size;
+		new_block->free = 1;
+		new_block->previous = block_to_split;
+		new_block->next = block_to_split->next;
+		new_block->size = block_to_split->size - size - BLOCK_METADATA_SIZE;
+		block_to_split->next = new_block;
+		block_to_split->size = size;
+	}
+}
+
+static void MemoryMergeBlocks()
+{
+
+}
+
+static void *MemoryMalloc(size_t size)
+{
+	block *last_block, *free_block, *new_block;
+
+	if (!size)
+		return NULL;
+
+	free_block = MemoryFindBlock(&last_block, size);
 	if (free_block)
 	{
+		MemorySplitBlock(free_block, size);
 		free_block->free = 0;
-		return (byte*)free_block + ALIGNED_BLOCK_SIZE;
+		return free_block->data;
 	}
-	new_block = Memory_ExtendHeap(last_block, size);
+	// Allocate a new memory block
+	new_block = MemoryExtendHeap(last_block, size);
 	if (new_block)
-		return new_block + ALIGNED_BLOCK_SIZE;
+		return new_block->data;
 	return NULL;
 }
 
-static void Memory_free(void *memory)
+static void MemoryFree(void *memory)
 {
-	block *block_to_free = ((byte*)memory - ALIGNED_BLOCK_SIZE);
+	block *block_to_free;
+	if (!memory)
+		return NULL;
+	block_to_free = ((byte*)memory - BLOCK_METADATA_SIZE);
 	block_to_free->free = 1;
 }
 
-namespace_Memory const Memory = { Memory_malloc, Memory_free };
+namespace_Memory const Memory = { MemoryMalloc, MemoryFree };
