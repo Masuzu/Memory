@@ -1,6 +1,11 @@
 #include "custom_malloc.h"
 
+#ifdef _WIN32
 #include <Windows.h>
+#endif
+#ifdef linux
+#include <unistd.h>
+#endif
 
 typedef struct Block
 {
@@ -8,7 +13,7 @@ typedef struct Block
 	struct Block *previous;
 	struct Block *next;
 	size_t free;
-	byte data[1];
+	char data[1];
 } Block;
 
 typedef struct
@@ -19,14 +24,16 @@ typedef struct
 	size_t free;
 } BlockMetadata;
 
+#ifdef _WIN32
 static HANDLE heap = NULL;
+#endif
 static Block *heap_base = NULL;
 
 // It is often required to align data: 4-byte aligned on 32-bit platforms and 8-bype aligned on 64-bit platforms 
 // Given an integer x, the closest integer larger or equal to x and which is a multiple of POINTER_SIZE is:
 // ((x-1)/POINTER_SIZE)*POINTER_SIZE+POINTER_SIZE
 
-#ifdef _WIN64
+#if defined(_WIN64) || defined(__x86_64__) || defined(__ppc64__)
 #define POINTER_SIZE	8
 
 // Shifting the bits to the right by i positions is equivalent to the division by 2^i and is faster than the division
@@ -60,6 +67,7 @@ static Block *MemoryFindBlock(Block **last, size_t size)
 // Returns the allocated block.
 static Block *MemoryExtendHeap(Block *last_block, size_t size)
 {
+#ifdef _WIN32
 	if (!heap)
 	{
 		heap = HeapCreate(0, 0, 0);
@@ -70,6 +78,12 @@ static Block *MemoryExtendHeap(Block *last_block, size_t size)
 	Block *next = HeapAlloc(heap, HEAP_ZERO_MEMORY, BLOCK_METADATA_SIZE + align(size));
 	if (!next)
 		return NULL;
+#endif
+#ifdef linux
+	Block *next = sbrk(0);
+	if (sbrk(BLOCK_METADATA_SIZE + align(size)) == (void*)-1)
+		return NULL;
+#endif
 
 	next->free = 0;
 	next->next = NULL;
@@ -77,7 +91,7 @@ static Block *MemoryExtendHeap(Block *last_block, size_t size)
 	next->size = size;
 	if (last_block)
 		last_block->next = next;
-	else
+	if (!heap_base)
 		heap_base = next;
 	
 	return next;
@@ -166,7 +180,7 @@ static void MemoryFree(void *memory)
 	Block *block_to_free;
 	if (!memory)
 		return;
-	block_to_free = ((byte*)memory - BLOCK_METADATA_SIZE);
+	block_to_free = ((char*)memory - BLOCK_METADATA_SIZE);
 	MemoryMergeBlocks(block_to_free);
 	block_to_free->free = 1;
 }

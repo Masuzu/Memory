@@ -1,7 +1,7 @@
 #ifndef __CUSTOM_MALLOC_H__
 #define __CUSTOM_MALLOC_H__
 
-#include <crtdefs.h>
+#include <stddef.h>
 
 typedef struct BlockLayout
 {

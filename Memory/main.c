@@ -1,7 +1,24 @@
 #include "custom_malloc.h"
 
 #include <stdio.h>
-#include <malloc.h>
+#ifdef linux
+#include <termios.h>
+#include <unistd.h>
+
+// Reads from keypress, doesn't echo
+int getch(void)
+{
+	struct termios oldattr, newattr;
+	int ch;
+	tcgetattr(STDIN_FILENO, &oldattr);
+	newattr = oldattr;
+	newattr.c_lflag &= ~(ICANON | ECHO);
+	tcsetattr(STDIN_FILENO, TCSANOW, &newattr);
+	ch = getchar();
+	tcsetattr(STDIN_FILENO, TCSANOW, &oldattr);
+	return ch;
+}
+#endif
 
 #define TEST_SUCCESSFUL_MEMORY_ALLOCATION(p) if (!(p))	{printf("ERROR: Out of memory\n"); return 1;}
 
@@ -67,7 +84,8 @@ int main()
 	PrintBlockLayout(&block_layout);
 	printf("\n");
 
-	system("pause");
+	printf("Press any key to continue...");
+	getch();
 
 	return 0;
 }
